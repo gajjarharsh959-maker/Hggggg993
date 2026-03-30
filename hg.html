@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>2D Mobile Car Game Pro</title>
+    <style>
+        /* CSS Reset & Mobile Optimizations */
+        * {
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-touch-callout: none;
+            margin: 0;
+            padding: 0;
+        }
+
+        body, html {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #1e272e;
+            touch-action: none; /* Prevents pull-to-refresh and zooming */
+        }
+
+        #gameCanvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* UI Overlays Container */
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+
+        /* HUD */
+        #hud {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: #ffffff;
+            font-family: 'Trebuchet MS', 'Lucida Sans Unicode', sans-serif;
+            font-size: 28px;
+            font-weight: 900;
+            text-shadow: 2px 2px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000;
+            pointer-events: none;
+            z-index: 10;
+        }
+        #speed { color: #f1c40f; }
+
+        /* Steering Wheel Control - CENTERED & BIGGER */
+        #steering-area {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 250px;
+            height: 250px;
+            pointer-events: auto;
+            border-radius: 50%;
+            background-color: rgba(0, 0, 0, 0.15); 
+            box-shadow: inset 0 0 30px rgba(0,0,0,0.3);
+            touch-action: none;
+        }
+
+        #steering-wheel {
+            width: 100%;
+            height: 100%;
+            background: url('STEARING.png') no-repeat center center;
+            background-size: contain;
+            transform-origin: center;
+            filter: drop-shadow(0px 10px 15px rgba(0,0,0,0.5));
+        }
+
+        /* Gas and Brake Pedals - MEDIUM SIZE & IMAGE BASED */
+        #pedals {
+            position: absolute;
+            bottom: 30px;
+            right: 30px;
+            display: flex;
+            gap: 15px;
+            pointer-events: auto;
+            align-items: flex-end;
+        }
+
+        .pedal {
+            width: 75px;  /* Medium width */
+            height: 100px; /* Medium height */
+            background-size: contain;
+            background-position: center bottom;
+            background-repeat: no-repeat;
+            /* Subtle glassmorphism background just in case images are missing */
+            background-color: rgba(255, 255, 255, 0.1); 
+            border-radius: 12px;
+            border: 2px solid rgba(255,255,255,0.2);
+            box-shadow: 0 8px 15px rgba(0,0,0,0.4);
+            transition: transform 0.1s, box-shadow 0.1s, filter 0.1s;
+        }
+
+        .pedal:active, .pedal.active {
+            transform: scale(0.92) translateY(8px);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.4);
+            filter: brightness(0.8);
+        }
+
+        #gas {
+            background-image: url('gas.png');
+            height: 120px; /* Gas pedal slightly taller for realism */
+        }
+
+        #brake {
+            background-image: url('break.png');
+        }
+        
+        /* Mobile Portrait Warning / Layout Fixes */
+        @media (orientation: portrait) {
+            #steering-area { width: 180px; height: 180px; bottom: 15px; }
+            #pedals { right: 15px; bottom: 20px; gap: 10px; }
+            .pedal { width: 60px; height: 85px; }
+            #gas { height: 100px; }
+            /* Push pedals up slightly so they don't overlap the centered steering wheel on narrow phones */
+            #pedals { bottom: 80px; } 
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Main Game Canvas -->
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- Overlay UI Layer -->
+    <div id="ui-layer">
+        <div id="hud">
+            <span id="speed">0</span> KM/H
+        </div>
+
+        <!-- Centered Steering -->
+        <div id="steering-area">
+            <div id="steering-wheel"></div>
+        </div>
+
+        <!-- Right Side Pedals -->
+        <div id="pedals">
+            <div id="brake" class="pedal"></div>
+            <div id="gas" class="pedal"></div>
+        </div>
+    </div>
+
+    <script>
+        /**
+         * INITIALIZATION & SETUP
+         */
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        let width = window.innerWidth;
+        let height = window.innerHeight;
+
+        function resizeCanvas() {
+            width = window.innerWidth;
+            height = window.innerHeight;
+            canvas.width = width;
+            canvas.height = height;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // Assets
+        const carImg = new Image();
+        carImg.src = 'CARS.png';
+
+        /**
+         * GAME STATE & PHYSICS
+         */
+        const car = {
+            x: 0,
+            y: 0,
+            angle: -Math.PI / 2, // Starts facing UP
+            speed: 0,
+            maxSpeed: 25,
+            acceleration: 0.4,
+            friction: 0.96,       
+            brakePower: 0.8,
+            turnSpeed: 0.055      
+        };
+
+        const camera = { x: 0, y: 0 };
+        const roadWidth = 600; // Wider road
+
+        // Input States
+        let isGas = false;
+        let isBrake = false;
+        let wheelAngle = 0; 
+        
+        /**
+         * TOUCH CONTROLS LOGIC
+         */
+        const gasBtn = document.getElementById('gas');
+        const brakeBtn = document.getElementById('brake');
+        const steeringArea = document.getElementById('steering-area');
+        const steeringWheel = document.getElementById('steering-wheel');
+
+        // Pedals Logic
+        const bindPedal = (btn, isGasPedal) => {
+            const press = (e) => {
+                e.preventDefault();
+                if (isGasPedal) isGas = true; else isBrake = true;
+                btn.classList.add('active');
+            };
+            const release = (e) => {
+                e.preventDefault();
+                if (isGasPedal) isGas = false; else isBrake = false;
+                btn.classList.remove('active');
+            };
+            btn.addEventListener('touchstart', press, {passive: false});
+            btn.addEventListener('touchend', release, {passive: false});
+            btn.addEventListener('touchcancel', release, {passive: false});
+            // Fallbacks for desktop mouse testing
+            btn.addEventListener('mousedown', press);
+            btn.addEventListener('mouseup', release);
+            btn.addEventListener('mouseleave', release);
+        };
+        bindPedal(gasBtn, true);
+        bindPedal(brakeBtn, false);
+
+        // Steering Wheel Logic
+        let steeringTouchId = null;
+        let wheelCenter = { x: 0, y: 0 };
+        let isMouseDragging = false; // For desktop testing
+
+        function startSteering(clientX, clientY, identifier) {
+            if (steeringTouchId !== null) return; 
+            steeringTouchId = identifier;
+            steeringWheel.style.transition = 'none';
+
+            const rect = steeringArea.getBoundingClientRect();
+            wheelCenter = {
+                x: rect.left + rect.width / 2,
+                y: rect.top + rect.height / 2
+            };
+            updateSteeringAngle(clientX, clientY);
+        }
+
+        function moveSteering(clientX, clientY, identifier) {
+            if (identifier === steeringTouchId) {
+                updateSteeringAngle(clientX, clientY);
+            }
+        }
+
+        function stopSteering(identifier) {
+            if (identifier === steeringTouchId || identifier === 'mouse') {
+                steeringTouchId = null;
+                isMouseDragging = false;
+                wheelAngle = 0;
+                steeringWheel.style.transition = 'transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)';
+                steeringWheel.style.transform = `rotate(0deg)`;
+            }
+        }
+
+        // Touch Events
+        steeringArea.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const touch = e.changedTouches[0];
+            startSteering(touch.clientX, touch.clientY, touch.identifier);
+        }, {passive: false});
+
+        steeringArea.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                moveSteering(e.changedTouches[i].clientX, e.changedTouches[i].clientY, e.changedTouches[i].identifier);
+            }
+        }, {passive: false});
+
+        steeringArea.addEventListener('touchend', (e) => {
+            for (let i = 0; i < e.changedTouches.length; i++) stopSteering(e.changedTouches[i].identifier);
+        });
+        steeringArea.addEventListener('touchcancel', (e) => {
+            for (let i = 0; i < e.changedTouches.length; i++) stopSteering(e.changedTouches[i].identifier);
+        });
+
+        // Mouse Events for Desktop testing
+        steeringArea.addEventListener('mousedown', (e) => {
+            isMouseDragging = true;
+            startSteering(e.clientX, e.clientY, 'mouse');
+        });
+        window.addEventListener('mousemove', (e) => {
+            if(isMouseDragging) moveSteering(e.clientX, e.clientY, 'mouse');
+        });
+        window.addEventListener('mouseup', () => stopSteering('mouse'));
+
+        function updateSteeringAngle(clientX, clientY) {
+            let dx = clientX - wheelCenter.x;
+            let dy = clientY - wheelCenter.y;
+            let angle = Math.atan2(dy, dx);
+            let deg = angle * (180 / Math.PI) + 90;
+            
+            if (deg > 180) deg -= 360;
+            deg = Math.max(-120, Math.min(120, deg)); // 120 degree turning limit
+            
+            wheelAngle = deg;
+            steeringWheel.style.transform = `rotate(${wheelAngle}deg)`;
+        }
+
+        /**
+         * ADVANCED BACKGROUND GENERATION (Checkered Grass & Shoulders)
+         */
+        function drawInfiniteBackground() {
+            // 1. Checkered Grass Ground
+            const tileSize = 200;
+            const offsetX = -(camera.x % tileSize);
+            const offsetY = -(camera.y % tileSize);
+
+            // Draw a bit beyond the edges to ensure no clipping
+            for (let x = -tileSize; x < width + tileSize; x += tileSize) {
+                for (let y = -tileSize; y < height + tileSize; y += tileSize) {
+                    let gridX = Math.floor((camera.x + x) / tileSize);
+                    let gridY = Math.floor((camera.y + y) / tileSize);
+
+                    // Alternating greens for speed illusion
+                    if ((gridX + gridY) % 2 === 0) {
+                        ctx.fillStyle = '#4CA950'; // Slightly richer green
+                    } else {
+                        ctx.fillStyle = '#459b49'; // Darker green
+                    }
+                    ctx.fillRect(x + offsetX, y + offsetY, tileSize + 1, tileSize + 1);
+                }
+            }
+            
+            // 2. Main Highway
+            const screenRoadX = (0 - roadWidth / 2) - camera.x + width / 2;
+            
+            if (screenRoadX < width && screenRoadX + roadWidth > 0) {
+                // Gravel Shoulders
+                ctx.fillStyle = '#7f8c8d'; 
+                ctx.fillRect(screenRoadX - 25, 0, roadWidth + 50, height);
+
+                // Asphalt Road
+                ctx.fillStyle = '#2c3e50'; 
+                ctx.fillRect(screenRoadX, 0, roadWidth, height);
+                
+                // Solid White Edge Lines
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(screenRoadX + 10, 0, 10, height);
+                ctx.fillRect(screenRoadX + roadWidth - 20, 0, 10, height);
+                
+                // Dashed Yellow Center Lines
+                ctx.fillStyle = '#f1c40f'; 
+                const dashHeight = 80;
+                const gapHeight = 80;
+                const totalDash = dashHeight + gapHeight;
+                let dashStartY = -(camera.y % totalDash) - totalDash;
+                
+                for (let y = dashStartY; y < height + totalDash; y += totalDash) {
+                    ctx.fillRect(screenRoadX + roadWidth / 2 - 5, y, 10, dashHeight);
+                }
+            }
+            
+            // 3. Procedural Trees with Shadows
+            drawProceduralTrees();
+        }
+
+        function drawProceduralTrees() {
+            const chunkSize = 350; 
+            let camGridX = Math.floor(camera.x / chunkSize) * chunkSize;
+            let camGridY = Math.floor(camera.y / chunkSize) * chunkSize;
+            
+            for(let x = camGridX - chunkSize; x <= camGridX + chunkSize * 2; x += chunkSize) {
+                for(let y = camGridY - chunkSize; y <= camGridY + chunkSize * 2; y += chunkSize) {
+                    
+                    let hash1 = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+                    let rand1 = hash1 - Math.floor(hash1);
+                    
+                    if (rand1 > 0.45) { // Tree density
+                        let hash2 = Math.sin(x * 78.233 + y * 12.9898) * 43758.5453;
+                        let rand2 = hash2 - Math.floor(hash2);
+                        
+                        let treeX = x + (rand1 * chunkSize);
+                        let treeY = y + (rand2 * chunkSize);
+                        
+                        // Keep trees off the road and shoulders
+                        if (treeX > -(roadWidth/2 + 80) && treeX < (roadWidth/2 + 80)) {
+                            continue; 
+                        }
+
+                        let screenX = treeX - camera.x + width/2;
+                        let screenY = treeY - camera.y + height/2;
+                        
+                        // Tree Drop Shadow
+                        ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+                        ctx.beginPath();
+                        ctx.arc(screenX + 12, screenY + 12, 45, 0, Math.PI*2);
+                        ctx.fill();
+
+                        // Base Tree Circle
+                        ctx.fillStyle = '#1e6b3b'; // Dark bottom edge
+                        ctx.beginPath();
+                        ctx.arc(screenX, screenY, 45, 0, Math.PI*2);
+                        ctx.fill();
+                        
+                        // Lighter Top Canopy
+                        ctx.fillStyle = '#2ecc71'; 
+                        ctx.beginPath();
+                        ctx.arc(screenX - 5, screenY - 5, 35, 0, Math.PI*2);
+                        ctx.fill();
+
+                        // Core highlight
+                        ctx.fillStyle = '#58d68d'; 
+                        ctx.beginPath();
+                        ctx.arc(screenX - 12, screenY - 12, 15, 0, Math.PI*2);
+                        ctx.fill();
+                    }
+                }
+            }
+        }
+
+        /**
+         * MAIN GAME LOOP
+         */
+        function gameLoop() {
+            // Physics
+            if (isGas) car.speed += car.acceleration;
+            if (isBrake) car.speed -= car.brakePower;
+            
+            car.speed *= car.friction;
+            
+            if (car.speed > car.maxSpeed) car.speed = car.maxSpeed;
+            if (car.speed < -car.maxSpeed / 2) car.speed = -car.maxSpeed / 2;
+            
+            if (Math.abs(car.speed) < 0.1 && !isGas && !isBrake) car.speed = 0;
+
+            if (Math.abs(car.speed) > 0.5) {
+                let steeringInput = wheelAngle / 120; 
+                let directionFactor = (car.speed > 0) ? 1 : -1; 
+                car.angle += steeringInput * car.turnSpeed * directionFactor;
+            }
+
+            car.x += Math.cos(car.angle) * car.speed;
+            car.y += Math.sin(car.angle) * car.speed;
+
+            // Camera follow
+            camera.x += (car.x - camera.x) * 1.0; 
+            camera.y += (car.y - camera.y) * 1.0; 
+
+            // Render
+            ctx.clearRect(0, 0, width, height);
+            drawInfiniteBackground();
+
+            // Draw Car Graphic
+            ctx.save();
+            ctx.translate(width / 2, height / 2);
+            ctx.rotate(car.angle);
+            
+            // Draw drop shadow for the car
+            ctx.fillStyle = 'rgba(0,0,0,0.5)';
+            ctx.fillRect(-60, -20, 120, 50); // General shadow shape
+
+            if (carImg.complete && carImg.naturalWidth > 0) {
+                let carDrawWidth = 140; 
+                let aspectRatio = carImg.naturalWidth / carImg.naturalHeight;
+                let carDrawHeight = carDrawWidth / aspectRatio;
+                ctx.drawImage(carImg, -carDrawWidth/2, -carDrawHeight/2, carDrawWidth, carDrawHeight);
+            } else {
+                ctx.fillStyle = '#e74c3c'; ctx.fillRect(-60, -30, 120, 60);
+                ctx.fillStyle = '#2c3e50'; ctx.fillRect(-20, -25, 40, 50);
+            }
+            ctx.restore();
+
+            // Speedometer update
+            let displaySpeed = Math.abs(Math.round(car.speed * 5));
+            document.getElementById('speed').innerText = displaySpeed;
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>
+
+
