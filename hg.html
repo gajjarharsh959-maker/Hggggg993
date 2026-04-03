@@ -1,11 +1,12 @@
+```html
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>2D Mobile Car Game Pro</title>
+    <title>Offline 2D Car Game</title>
     <style>
-        /* CSS Reset & Mobile Optimizations */
+        /* CSS Reset & Mobile Optimizations - 100% Offline Ready */
         * {
             box-sizing: border-box;
             user-select: none;
@@ -21,6 +22,7 @@
             overflow: hidden;
             background-color: #1e272e;
             touch-action: none; /* Prevents pull-to-refresh and zooming */
+            font-family: sans-serif;
         }
 
         #gameCanvas {
@@ -39,13 +41,12 @@
             pointer-events: none;
         }
 
-        /* HUD */
+        /* HUD - Speedometer */
         #hud {
             position: absolute;
             top: 20px;
             left: 20px;
             color: #ffffff;
-            font-family: 'Trebuchet MS', 'Lucida Sans Unicode', sans-serif;
             font-size: 28px;
             font-weight: 900;
             text-shadow: 2px 2px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000;
@@ -54,7 +55,7 @@
         }
         #speed { color: #f1c40f; }
 
-        /* Steering Wheel Control - CENTERED & BIGGER */
+        /* Steering Wheel Control - CENTERED */
         #steering-area {
             position: absolute;
             bottom: 20px;
@@ -78,29 +79,37 @@
             filter: drop-shadow(0px 10px 15px rgba(0,0,0,0.5));
         }
 
-        /* Gas and Brake Pedals - MEDIUM SIZE & IMAGE BASED */
+        /* Gas and Brake Pedals - MOVED UP (Top Right) */
         #pedals {
             position: absolute;
-            bottom: 30px;
-            right: 30px;
+            top: 20px; /* Moved to the top */
+            right: 20px;
             display: flex;
             gap: 15px;
             pointer-events: auto;
-            align-items: flex-end;
+            align-items: flex-start; /* Align from the top */
+            z-index: 10;
         }
 
         .pedal {
-            width: 75px;  /* Medium width */
-            height: 100px; /* Medium height */
+            width: 75px;
+            height: 100px;
             background-size: contain;
-            background-position: center bottom;
+            background-position: center;
             background-repeat: no-repeat;
-            /* Subtle glassmorphism background just in case images are missing */
-            background-color: rgba(255, 255, 255, 0.1); 
             border-radius: 12px;
-            border: 2px solid rgba(255,255,255,0.2);
+            border: 2px solid rgba(255,255,255,0.4);
             box-shadow: 0 8px 15px rgba(0,0,0,0.4);
             transition: transform 0.1s, box-shadow 0.1s, filter 0.1s;
+            
+            /* Fallback styles in case gas.png / break.png are missing offline */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 14px;
+            text-shadow: 1px 1px 2px black;
         }
 
         .pedal:active, .pedal.active {
@@ -109,23 +118,23 @@
             filter: brightness(0.8);
         }
 
-        #gas {
-            background-image: url('gas.png');
-            height: 120px; /* Gas pedal slightly taller for realism */
-        }
-
         #brake {
             background-image: url('break.png');
+            background-color: rgba(231, 76, 60, 0.6); /* Fallback Red */
+        }
+
+        #gas {
+            background-image: url('gas.png');
+            background-color: rgba(46, 204, 113, 0.6); /* Fallback Green */
+            height: 120px; /* Gas pedal slightly taller */
         }
         
-        /* Mobile Portrait Warning / Layout Fixes */
+        /* Mobile Portrait Layout Fixes */
         @media (orientation: portrait) {
             #steering-area { width: 180px; height: 180px; bottom: 15px; }
-            #pedals { right: 15px; bottom: 20px; gap: 10px; }
-            .pedal { width: 60px; height: 85px; }
+            #pedals { top: 20px; right: 15px; gap: 10px; }
+            .pedal { width: 60px; height: 85px; font-size: 12px; }
             #gas { height: 100px; }
-            /* Push pedals up slightly so they don't overlap the centered steering wheel on narrow phones */
-            #pedals { bottom: 80px; } 
         }
     </style>
 </head>
@@ -140,15 +149,15 @@
             <span id="speed">0</span> KM/H
         </div>
 
-        <!-- Centered Steering -->
-        <div id="steering-area">
-            <div id="steering-wheel"></div>
+        <!-- Right Side Pedals (Now at the TOP) -->
+        <div id="pedals">
+            <div id="brake" class="pedal">BRAKE</div>
+            <div id="gas" class="pedal">GAS</div>
         </div>
 
-        <!-- Right Side Pedals -->
-        <div id="pedals">
-            <div id="brake" class="pedal"></div>
-            <div id="gas" class="pedal"></div>
+        <!-- Centered Steering (Remains at BOTTOM) -->
+        <div id="steering-area">
+            <div id="steering-wheel"></div>
         </div>
     </div>
 
@@ -170,7 +179,7 @@
         window.addEventListener('resize', resizeCanvas);
         resizeCanvas();
 
-        // Assets
+        // Load Car Asset (with fallback detection)
         const carImg = new Image();
         carImg.src = 'CARS.png';
 
@@ -190,7 +199,7 @@
         };
 
         const camera = { x: 0, y: 0 };
-        const roadWidth = 600; // Wider road
+        const roadWidth = 600;
 
         // Input States
         let isGas = false;
@@ -220,7 +229,7 @@
             btn.addEventListener('touchstart', press, {passive: false});
             btn.addEventListener('touchend', release, {passive: false});
             btn.addEventListener('touchcancel', release, {passive: false});
-            // Fallbacks for desktop mouse testing
+            // Desktop mouse testing
             btn.addEventListener('mousedown', press);
             btn.addEventListener('mouseup', release);
             btn.addEventListener('mouseleave', release);
@@ -231,7 +240,7 @@
         // Steering Wheel Logic
         let steeringTouchId = null;
         let wheelCenter = { x: 0, y: 0 };
-        let isMouseDragging = false; // For desktop testing
+        let isMouseDragging = false; 
 
         function startSteering(clientX, clientY, identifier) {
             if (steeringTouchId !== null) return; 
@@ -247,7 +256,7 @@
         }
 
         function moveSteering(clientX, clientY, identifier) {
-            if (identifier === steeringTouchId) {
+            if (identifier === steeringTouchId || identifier === 'mouse') {
                 updateSteeringAngle(clientX, clientY);
             }
         }
@@ -262,7 +271,7 @@
             }
         }
 
-        // Touch Events
+        // Touch Events for Steering
         steeringArea.addEventListener('touchstart', (e) => {
             e.preventDefault();
             const touch = e.changedTouches[0];
@@ -283,7 +292,7 @@
             for (let i = 0; i < e.changedTouches.length; i++) stopSteering(e.changedTouches[i].identifier);
         });
 
-        // Mouse Events for Desktop testing
+        // Mouse Events for Steering
         steeringArea.addEventListener('mousedown', (e) => {
             isMouseDragging = true;
             startSteering(e.clientX, e.clientY, 'mouse');
@@ -300,56 +309,50 @@
             let deg = angle * (180 / Math.PI) + 90;
             
             if (deg > 180) deg -= 360;
-            deg = Math.max(-120, Math.min(120, deg)); // 120 degree turning limit
+            deg = Math.max(-120, Math.min(120, deg)); 
             
             wheelAngle = deg;
             steeringWheel.style.transform = `rotate(${wheelAngle}deg)`;
         }
 
         /**
-         * ADVANCED BACKGROUND GENERATION (Checkered Grass & Shoulders)
+         * PROCEDURAL BACKGROUND GENERATION
          */
         function drawInfiniteBackground() {
-            // 1. Checkered Grass Ground
+            // Checkered Grass Ground
             const tileSize = 200;
             const offsetX = -(camera.x % tileSize);
             const offsetY = -(camera.y % tileSize);
 
-            // Draw a bit beyond the edges to ensure no clipping
             for (let x = -tileSize; x < width + tileSize; x += tileSize) {
                 for (let y = -tileSize; y < height + tileSize; y += tileSize) {
                     let gridX = Math.floor((camera.x + x) / tileSize);
                     let gridY = Math.floor((camera.y + y) / tileSize);
 
-                    // Alternating greens for speed illusion
                     if ((gridX + gridY) % 2 === 0) {
-                        ctx.fillStyle = '#4CA950'; // Slightly richer green
+                        ctx.fillStyle = '#4CA950';
                     } else {
-                        ctx.fillStyle = '#459b49'; // Darker green
+                        ctx.fillStyle = '#459b49';
                     }
                     ctx.fillRect(x + offsetX, y + offsetY, tileSize + 1, tileSize + 1);
                 }
             }
             
-            // 2. Main Highway
+            // Main Highway
             const screenRoadX = (0 - roadWidth / 2) - camera.x + width / 2;
             
             if (screenRoadX < width && screenRoadX + roadWidth > 0) {
-                // Gravel Shoulders
-                ctx.fillStyle = '#7f8c8d'; 
+                ctx.fillStyle = '#7f8c8d'; // Shoulders
                 ctx.fillRect(screenRoadX - 25, 0, roadWidth + 50, height);
 
-                // Asphalt Road
-                ctx.fillStyle = '#2c3e50'; 
+                ctx.fillStyle = '#2c3e50'; // Asphalt
                 ctx.fillRect(screenRoadX, 0, roadWidth, height);
                 
-                // Solid White Edge Lines
-                ctx.fillStyle = '#ffffff';
+                ctx.fillStyle = '#ffffff'; // White Edge Lines
                 ctx.fillRect(screenRoadX + 10, 0, 10, height);
                 ctx.fillRect(screenRoadX + roadWidth - 20, 0, 10, height);
                 
-                // Dashed Yellow Center Lines
-                ctx.fillStyle = '#f1c40f'; 
+                ctx.fillStyle = '#f1c40f'; // Yellow Center Dashes
                 const dashHeight = 80;
                 const gapHeight = 80;
                 const totalDash = dashHeight + gapHeight;
@@ -360,7 +363,6 @@
                 }
             }
             
-            // 3. Procedural Trees with Shadows
             drawProceduralTrees();
         }
 
@@ -375,41 +377,34 @@
                     let hash1 = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
                     let rand1 = hash1 - Math.floor(hash1);
                     
-                    if (rand1 > 0.45) { // Tree density
+                    if (rand1 > 0.45) {
                         let hash2 = Math.sin(x * 78.233 + y * 12.9898) * 43758.5453;
                         let rand2 = hash2 - Math.floor(hash2);
                         
                         let treeX = x + (rand1 * chunkSize);
                         let treeY = y + (rand2 * chunkSize);
                         
-                        // Keep trees off the road and shoulders
-                        if (treeX > -(roadWidth/2 + 80) && treeX < (roadWidth/2 + 80)) {
-                            continue; 
-                        }
+                        if (treeX > -(roadWidth/2 + 80) && treeX < (roadWidth/2 + 80)) continue; 
 
                         let screenX = treeX - camera.x + width/2;
                         let screenY = treeY - camera.y + height/2;
                         
-                        // Tree Drop Shadow
-                        ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+                        ctx.fillStyle = 'rgba(0, 0, 0, 0.35)'; // Shadow
                         ctx.beginPath();
                         ctx.arc(screenX + 12, screenY + 12, 45, 0, Math.PI*2);
                         ctx.fill();
 
-                        // Base Tree Circle
-                        ctx.fillStyle = '#1e6b3b'; // Dark bottom edge
+                        ctx.fillStyle = '#1e6b3b'; // Base Leaf
                         ctx.beginPath();
                         ctx.arc(screenX, screenY, 45, 0, Math.PI*2);
                         ctx.fill();
                         
-                        // Lighter Top Canopy
-                        ctx.fillStyle = '#2ecc71'; 
+                        ctx.fillStyle = '#2ecc71'; // Light Top
                         ctx.beginPath();
                         ctx.arc(screenX - 5, screenY - 5, 35, 0, Math.PI*2);
                         ctx.fill();
 
-                        // Core highlight
-                        ctx.fillStyle = '#58d68d'; 
+                        ctx.fillStyle = '#58d68d'; // Highlight
                         ctx.beginPath();
                         ctx.arc(screenX - 12, screenY - 12, 15, 0, Math.PI*2);
                         ctx.fill();
@@ -455,9 +450,8 @@
             ctx.translate(width / 2, height / 2);
             ctx.rotate(car.angle);
             
-            // Draw drop shadow for the car
             ctx.fillStyle = 'rgba(0,0,0,0.5)';
-            ctx.fillRect(-60, -20, 120, 50); // General shadow shape
+            ctx.fillRect(-60, -20, 120, 50); 
 
             if (carImg.complete && carImg.naturalWidth > 0) {
                 let carDrawWidth = 140; 
@@ -466,6 +460,7 @@
                 ctx.drawImage(carImg, -carDrawWidth/2, -carDrawHeight/2, carDrawWidth, carDrawHeight);
             } else {
                 ctx.fillStyle = '#e74c3c'; ctx.fillRect(-60, -30, 120, 60);
+                ctx.fillStyle = '#f39c12'; ctx.fillRect(50, -25, 10, 50);
                 ctx.fillStyle = '#2c3e50'; ctx.fillRect(-20, -25, 40, 50);
             }
             ctx.restore();
@@ -483,3 +478,4 @@
 </html>
 
 
+```
